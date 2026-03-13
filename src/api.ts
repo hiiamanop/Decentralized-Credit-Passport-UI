@@ -12,6 +12,7 @@ export type ScoreResponse = {
   risk?: string;
   verificationHash?: string;
   explorerUrl?: string | null;
+  onchainUpdated?: boolean;
   aiDetails?: unknown;
   error?: string;
 };
@@ -21,6 +22,7 @@ export type CreatePassportResponse = {
   businessId?: string;
   verificationHash?: string;
   explorerUrl?: string | null;
+  onchainUpdated?: boolean;
   error?: string;
 };
 
@@ -28,6 +30,7 @@ export type SetPublicResponse = {
   success: boolean;
   enabled?: boolean;
   explorerUrl?: string | null;
+  onchainUpdated?: boolean;
   error?: string;
 };
 
@@ -108,6 +111,7 @@ export type ScoreFromGatewayResponse =
       passport: unknown;
       verificationHash: string;
       explorerUrl: string | null;
+      onchainUpdated?: boolean;
     }
   | {
       success: false;

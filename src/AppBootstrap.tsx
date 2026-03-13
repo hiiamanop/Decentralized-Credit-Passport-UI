@@ -10,28 +10,9 @@ import {
   type PassportPublicResponse,
   type PassportSummaryResponse,
   type ScoreFromGatewayResponse,
-  type ScoreResponse,
   type SetPublicResponse,
   type VerifyPassportHashResponse,
 } from "./api";
-
-type FinancialData = {
-  monthlyIncome: number;
-  age: number;
-  loanAmount: number;
-  loanIntRate: number;
-  defaultHistory: boolean;
-  creditHistoryLen: number;
-};
-
-const defaultFinancialData: FinancialData = {
-  monthlyIncome: 5000,
-  age: 30,
-  loanAmount: 1000,
-  loanIntRate: 10,
-  defaultHistory: false,
-  creditHistoryLen: 3,
-};
 
 type TabKey = "overview" | "gateway" | "passport";
 
@@ -70,6 +51,18 @@ function riskTone(risk?: string | null): "success" | "warning" | "danger" | "sec
   return "secondary";
 }
 
+function extractApiErrorMessage(err: any): string {
+  const raw = err?.message ? String(err.message) : String(err);
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      const e = (parsed as any).error;
+      if (typeof e === "string" && e.trim().length) return e.trim();
+    }
+  } catch {}
+  return raw;
+}
+
 export default function AppBootstrap() {
   const [tab, setTab] = useState<TabKey>("overview");
 
@@ -95,9 +88,7 @@ export default function AppBootstrap() {
   const [summaryResult, setSummaryResult] = useState<PassportSummaryResponse | null>(null);
   const [publicResult, setPublicResult] = useState<PassportPublicResponse | null>(null);
   const [createResult, setCreateResult] = useState<CreatePassportResponse | null>(null);
-
-  const [financialData, setFinancialData] = useState<FinancialData>(defaultFinancialData);
-  const [scoreResult, setScoreResult] = useState<ScoreResponse | null>(null);
+  const [passportNotice, setPassportNotice] = useState<{ tone: "info" | "warning" | "success"; text: string } | null>(null);
 
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -156,7 +147,7 @@ export default function AppBootstrap() {
       });
       setScoreGatewayResult(resp);
     } catch (e: any) {
-      setError(e?.message || "Gagal scoring dari gateway");
+      setError(extractApiErrorMessage(e) || "Gagal scoring dari gateway");
     } finally {
       setLoading(null);
     }
@@ -178,7 +169,7 @@ export default function AppBootstrap() {
       });
       setVerifyResult(resp);
     } catch (e: any) {
-      setError(e?.message || "Gagal verifikasi hash");
+      setError(extractApiErrorMessage(e) || "Gagal verifikasi hash");
     } finally {
       setLoading(null);
     }
@@ -196,7 +187,7 @@ export default function AppBootstrap() {
       setPublicResult(pub);
       setPublicEnabled(Boolean(summary.summary?.is_public));
     } catch (e: any) {
-      setError(e?.message || "Gagal refresh passport");
+      setError(extractApiErrorMessage(e) || "Gagal refresh passport");
     }
   }
 
@@ -204,12 +195,19 @@ export default function AppBootstrap() {
     setError(null);
     setLoading("create");
     setCreateResult(null);
+    setPassportNotice(null);
     try {
       const resp = await apiPost<CreatePassportResponse>(normalizedBaseUrl, "/passport/create", { businessId, accountId });
       setCreateResult(resp);
       await refreshPassport();
     } catch (e: any) {
-      setError(e?.message || "Gagal create passport");
+      const msg = extractApiErrorMessage(e) || "Gagal create passport";
+      if (msg.toLowerCase().includes("already exists")) {
+        setCreateResult({ success: false, error: msg });
+        setPassportNotice({ tone: "info", text: "Passport sudah ada untuk akun ini. Klik Refresh untuk melihat summary." });
+        return;
+      }
+      setError(msg);
     } finally {
       setLoading(null);
     }
@@ -223,22 +221,7 @@ export default function AppBootstrap() {
       if (!resp.success) setError(resp.error || "Gagal update public flag");
       await refreshPassport();
     } catch (e: any) {
-      setError(e?.message || "Gagal update public flag");
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  async function calculateScore() {
-    setError(null);
-    setLoading("score");
-    setScoreResult(null);
-    try {
-      const resp = await apiPost<ScoreResponse>(normalizedBaseUrl, "/calculate-score", { accountId, financialData });
-      setScoreResult(resp);
-      await refreshPassport();
-    } catch (e: any) {
-      setError(e?.message || "Gagal calculate score");
+      setError(extractApiErrorMessage(e) || "Gagal update public flag");
     } finally {
       setLoading(null);
     }
@@ -268,6 +251,9 @@ export default function AppBootstrap() {
   const scorePercent = gatewayAi?.score !== null && gatewayAi?.score !== undefined ? clamp01(gatewayAi.score / 1000) : null;
   const scoreTone = riskTone(gatewayAi?.riskCategory ?? null);
   const events = gwEvents?.items ?? [];
+
+  const gatewayExplorerUrl = scoreGatewayResult?.success ? scoreGatewayResult.explorerUrl : null;
+  const gatewayOnchain = scoreGatewayResult?.success ? Boolean((scoreGatewayResult as any).onchainUpdated) : false;
 
   return (
     <div>
@@ -354,13 +340,18 @@ export default function AppBootstrap() {
 
                 {scoreGatewayResult?.success ? (
                   <div className="mt-3">
+                    <div className="d-flex align-items-center gap-2">
+                      <span className={`badge text-bg-${gatewayOnchain ? "success" : "secondary"}`}>
+                        {gatewayOnchain ? "On-chain" : "Off-chain"}
+                      </span>
+                      {gatewayExplorerUrl ? (
+                        <a className="btn btn-link px-0" href={gatewayExplorerUrl} target="_blank" rel="noreferrer">
+                          Explorer
+                        </a>
+                      ) : null}
+                    </div>
                     <div className="small text-secondary">verification_hash</div>
                     <div className="font-monospace small">{scoreGatewayResult.verificationHash}</div>
-                    {scoreGatewayResult.explorerUrl ? (
-                      <a className="btn btn-link px-0" href={scoreGatewayResult.explorerUrl} target="_blank" rel="noreferrer">
-                        Open Explorer
-                      </a>
-                    ) : null}
                   </div>
                 ) : null}
 
@@ -413,12 +404,22 @@ export default function AppBootstrap() {
                     <div className="card-body">
                       <div className="display-6 fw-semibold">{gatewayAi?.score ?? "-"}</div>
                       <div className="progress my-2" role="progressbar" aria-label="score">
-                        <div className={`progress-bar bg-${scoreTone}`} style={{ width: `${scorePercent ? scorePercent * 100 : 0}%` }} />
+                        <div className={`progress-bar bg-${scoreTone}`} style={{ width: `${scorePercent !== null ? scorePercent * 100 : 0}%` }} />
                       </div>
                       <div className="d-flex justify-content-between text-secondary small">
                         <span>0</span>
                         <span>1000</span>
                       </div>
+                      {gatewayExplorerUrl ? (
+                        <div className="mt-2">
+                          <span className={`badge text-bg-${gatewayOnchain ? "success" : "secondary"} me-2`}>
+                            {gatewayOnchain ? "On-chain updated" : "Off-chain"}
+                          </span>
+                          <a href={gatewayExplorerUrl} target="_blank" rel="noreferrer">
+                            Open explorer
+                          </a>
+                        </div>
+                      ) : null}
                       <div className="mt-2 small">
                         Probability of Default:{" "}
                         <span className="fw-semibold">
@@ -583,6 +584,9 @@ export default function AppBootstrap() {
                   <div className="card">
                     <div className="card-header fw-semibold">Passport</div>
                     <div className="card-body">
+                      {passportNotice ? (
+                        <div className={`alert alert-${passportNotice.tone} py-2`}>{passportNotice.text}</div>
+                      ) : null}
                       <div className="d-flex flex-wrap gap-2">
                         <button className="btn btn-outline-secondary" onClick={refreshPassport} disabled={!accountId || loading !== null}>
                           Refresh
@@ -598,10 +602,17 @@ export default function AppBootstrap() {
                             {loading === "create" ? "Creating..." : "Create"}
                           </button>
                         </div>
-                        {createResult?.explorerUrl ? (
-                          <a className="btn btn-link px-0" href={createResult.explorerUrl} target="_blank" rel="noreferrer">
-                            Open Explorer
-                          </a>
+                        {createResult ? (
+                          <div className="mt-2 d-flex align-items-center gap-2">
+                            <span className={`badge text-bg-${createResult.success ? "success" : "secondary"}`}>
+                              {createResult.success ? (createResult.onchainUpdated ? "Created on-chain" : "Created off-chain") : "Not created"}
+                            </span>
+                            {createResult.explorerUrl ? (
+                              <a className="btn btn-link px-0" href={createResult.explorerUrl} target="_blank" rel="noreferrer">
+                                Explorer
+                              </a>
+                            ) : null}
+                          </div>
                         ) : null}
                       </div>
 
@@ -624,70 +635,6 @@ export default function AppBootstrap() {
                           <pre className="small bg-body-tertiary border rounded p-2 mt-2 mb-0">{JSON.stringify(publicResult?.public ?? null, null, 2)}</pre>
                         </details>
                       </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="col-md-6">
-                  <div className="card">
-                    <div className="card-header fw-semibold">Legacy Scoring (manual)</div>
-                    <div className="card-body">
-                      <div className="row g-2">
-                        <div className="col-sm-6">
-                          <label className="form-label">Monthly Income</label>
-                          <input
-                            className="form-control"
-                            value={financialData.monthlyIncome}
-                            onChange={(e) => setFinancialData((p) => ({ ...p, monthlyIncome: toNumber(e.target.value, p.monthlyIncome) }))}
-                          />
-                        </div>
-                        <div className="col-sm-6">
-                          <label className="form-label">Age</label>
-                          <input className="form-control" value={financialData.age} onChange={(e) => setFinancialData((p) => ({ ...p, age: toNumber(e.target.value, p.age) }))} />
-                        </div>
-                        <div className="col-sm-6">
-                          <label className="form-label">Loan Amount</label>
-                          <input className="form-control" value={financialData.loanAmount} onChange={(e) => setFinancialData((p) => ({ ...p, loanAmount: toNumber(e.target.value, p.loanAmount) }))} />
-                        </div>
-                        <div className="col-sm-6">
-                          <label className="form-label">Loan Interest Rate</label>
-                          <input className="form-control" value={financialData.loanIntRate} onChange={(e) => setFinancialData((p) => ({ ...p, loanIntRate: toNumber(e.target.value, p.loanIntRate) }))} />
-                        </div>
-                        <div className="col-sm-6">
-                          <label className="form-label">Credit History Length</label>
-                          <input className="form-control" value={financialData.creditHistoryLen} onChange={(e) => setFinancialData((p) => ({ ...p, creditHistoryLen: toNumber(e.target.value, p.creditHistoryLen) }))} />
-                        </div>
-                        <div className="col-sm-6 d-flex align-items-end">
-                          <div className="form-check">
-                            <input
-                              className="form-check-input"
-                              type="checkbox"
-                              checked={financialData.defaultHistory}
-                              onChange={(e) => setFinancialData((p) => ({ ...p, defaultHistory: e.target.checked }))}
-                              id="defaultHistory"
-                            />
-                            <label className="form-check-label" htmlFor="defaultHistory">
-                              Default History
-                            </label>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="d-flex gap-2 mt-3">
-                        <button className="btn btn-outline-primary" onClick={calculateScore} disabled={!accountId || loading !== null}>
-                          {loading === "score" ? "Scoring..." : "Calculate Score"}
-                        </button>
-                        {scoreResult?.explorerUrl ? (
-                          <a className="btn btn-link" href={scoreResult.explorerUrl} target="_blank" rel="noreferrer">
-                            Open Explorer
-                          </a>
-                        ) : null}
-                      </div>
-
-                      <details className="mt-3">
-                        <summary className="small">Raw response</summary>
-                        <pre className="small bg-body-tertiary border rounded p-2 mt-2 mb-0">{JSON.stringify(scoreResult, null, 2)}</pre>
-                      </details>
                     </div>
                   </div>
                 </div>
